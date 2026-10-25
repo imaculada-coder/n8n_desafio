@@ -1,0 +1,330 @@
+{
+  "name": "Desafio.Dio",
+  "nodes": [
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1792,
+        -208
+      ],
+      "id": "986f5d49-a543-44eb-9da3-dc54e82337c5",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        576,
+        -480
+      ],
+      "id": "863ad561-4201-4c0c-a334-b5be286cafff",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "Clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        -288
+      ],
+      "id": "d270e298-58f6-4de0-9013-210ea99fd57a",
+      "name": "Cadastro Clientes",
+      "webhookId": "f84acfd4-be52-4c80-a3b8-474bc07e6561"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        -208
+      ],
+      "id": "17d54973-2c3f-4e95-82fe-07030298ab2e",
+      "name": "Investimentos"
+    },
+    {
+      "parameters": {
+        "jsCode": " // Receber o CSV do nó HTTP Request\nconst csvRaw = $input.first().json.data;\n\nif (typeof csvRaw !== \"string\") {\n  throw new Error(\"O HTTP Request deve retornar o CSV como texto no campo data.\");\n}\n\n// Separar as linhas do CSV\nconst lines = csvRaw\n  .replace(/^\\uFEFF/, \"\")\n  .split(/\\r?\\n/)\n  .map(l => l.trim())\n  .filter(Boolean);\n\n// Identificar o cabeçalho (separado por vírgulas)\nconst headers = lines[0]\n  .split(\",\")\n  .map(h => h.trim());\n\n// Converter as linhas em objetos JSON\nconst investimentos = lines.slice(1).map(line => {\n  const cols = line.split(\",\").map(c => c.trim());\n\n  const obj = {};\n\n  headers.forEach((h, i) => {\n    obj[h] = cols[i] ?? \"\";\n  });\n\n  // Converter o investimento mínimo em número\n  obj.minimo = Number(obj.minimo) || 0;\n\n  return obj;\n});\n\n// Devolver a lista de investimentos\nreturn [{ json: { investimentos } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        -208
+      ],
+      "id": "053f8e56-075d-4323-9023-bd36c5e346c8",
+      "name": "Normalizando"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst clientes = $('Cadastro Clientes').first().json.body?.clientes;\n\nconst investimentos = $('Normalizando').first().json.investimentos;\n\n// Verificar se as duas listas foram recebidas\nif (!Array.isArray(clientes) || !Array.isArray(investimentos)) {\n  throw new Error(\n    'Não encontrei os clientes do Webhook ou os investimentos do primeiro Code.'\n  );\n}\n\n// Formatação de valores em reais\nconst dinheiro = new Intl.NumberFormat('pt-BR', {\n  style: 'currency',\n  currency: 'BRL'\n});\n\n// Converter valores como \"R$ 12.500,00\" em 12500\nfunction paraNumero(valor) {\n  if (typeof valor === 'number') return valor;\n\n  const texto = String(valor ?? '')\n    .replace(/R\\$/gi, '')\n    .replace(/\\s/g, '');\n\n  return texto.includes(',')\n    ? Number(texto.replace(/\\./g, '').replace(',', '.'))\n    : Number(texto.replace(/[^\\d.-]/g, ''));\n}\n\n// Padronizar os perfis\nfunction normalizar(valor) {\n  return String(valor ?? '')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .trim()\n    .toLowerCase();\n}\n\n// Criar uma mensagem personalizada para cada cliente\nconst mensagens = clientes.map(cliente => {\n\n  const nome = String(cliente.nome ?? 'Cliente').trim();\n  const primeiroNome = nome.split(/\\s+/)[0];\n  const email = String(cliente.email ?? '').trim();\n  const perfil = String(cliente.perfil ?? '').trim();\n  const saldo = paraNumero(cliente.saldo);\n\n  if (!Number.isFinite(saldo)) {\n    throw new Error(`Saldo inválido para ${nome}`);\n  }\n\n  // Buscar investimentos compatíveis com perfil e saldo\n  const compativeis = investimentos\n    .filter(inv =>\n      normalizar(inv.perfil) === normalizar(perfil) &&\n      paraNumero(inv.minimo) <= saldo\n    )\n    .sort((a, b) =>\n      paraNumero(a.minimo) - paraNumero(b.minimo)\n    );\n\n  const linhas = compativeis.map((inv, i) =>\n    `${i + 1}. ${inv.produto} — aplicação mínima: ` +\n    `${dinheiro.format(paraNumero(inv.minimo))}; ` +\n    `rentabilidade informada no CSV: ` +\n    `${inv.rentabilidade || 'não informada'}.`\n  );\n\n  let conteudo;\n\n  if (compativeis.length > 0) {\n    conteudo =\n      `Considerando seu perfil ${perfil} e seu saldo de ` +\n      `${dinheiro.format(saldo)}, identificamos as seguintes ` +\n      `opções do catálogo compatíveis com seus dados:\\n\\n` +\n      linhas.join('\\n');\n  } else {\n    conteudo =\n      `Considerando seu perfil ${perfil} e seu saldo de ` +\n      `${dinheiro.format(saldo)}, não encontramos produtos ` +\n      `no catálogo que atendam ao investimento mínimo.`;\n  }\n\n  const mensagem =\n    `Olá, ${primeiroNome}!\\n\\n` +\n    conteudo +\n    `\\n\\nEstas informações são ilustrativas e fazem parte ` +\n    `de um exercício educacional. Não constituem ` +\n    `recomendação financeira individual, e as ` +\n    `rentabilidades apresentadas não são garantidas.`;\n\n  return {\n    nome,\n    email,\n    perfil,\n    saldo,\n    mensagem\n  };\n});\n\n// Retornar todas as mensagens em um único JSON\nreturn [{\n  json: {\n    total_clientes: clientes.length,\n    total_mensagens: mensagens.length,\n    mensagens\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -208
+      ],
+      "id": "25b85375-3b8f-4e67-bcd7-f626491accf0",
+      "name": "Gera mensagens"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n/*\n * PREPARAÇÃO DOS DADOS PARA INTELIGÊNCIA ARTIFICIAL\n * Entrada: mensagens geradas pelo Code anterior\n * Saída: uma linha por cliente\n */\n\n// 1. Recuperar as mensagens do nó anterior\nconst entrada = $input.first().json;\n\nif (!Array.isArray(entrada.mensagens)) {\n  throw new Error(\n    \"Não foi encontrada a lista de mensagens do nó anterior.\"\n  );\n}\n\n// 2. Limpar textos\nfunction limparTexto(valor) {\n  return String(valor ?? \"\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n}\n\n// 3. Organizar os clientes em registros individuais\nconst resultado = entrada.mensagens.map((cliente, indice) => {\n\n  const nome = limparTexto(cliente.nome);\n  const email = limparTexto(cliente.email).toLowerCase();\n  const perfil = limparTexto(cliente.perfil);\n  const saldo = Number(cliente.saldo);\n  const mensagem = String(cliente.mensagem ?? \"\")\n    .replace(/\\r\\n/g, \"\\n\")\n    .trim();\n\n  // 4. Validar informações\n  if (!nome || !email || !perfil || !Number.isFinite(saldo)) {\n    throw new Error(\n      `Dados inválidos no cliente ${indice + 1}`\n    );\n  }\n\n  // 5. Criar instrução para a futura IA\n  const promptIA = `\nAtue como um assistente de comunicação financeira.\n\nRevise a mensagem destinada ao cliente, tornando-a\nclara, profissional, cordial e personalizada.\n\nRegras:\n- Preserve o perfil e os valores informados.\n- Não invente investimentos nem rentabilidades.\n- Não prometa resultados financeiros.\n- Não apresente recomendações financeiras individuais.\n- Preserve o aviso de finalidade educacional.\n- Responda somente com a mensagem revisada.\n\nNome: ${nome}\nPerfil: ${perfil}\nSaldo disponível: R$ ${saldo.toFixed(2)}\n\nMensagem original:\n${mensagem}\n`.trim();\n\n  // 6. Retornar uma linha da tabela\n  return {\n    json: {\n      id_cliente: indice + 1,\n      nome: nome,\n      email: email,\n      perfil: perfil,\n      saldo: saldo,\n      mensagem: mensagem,\n      prompt_ia: promptIA,\n      status: \"Pronto para IA\"\n    },\n    pairedItem: {\n      item: 0\n    }\n  };\n});\n\n// 7. Entregar os registros ao próximo nó\nreturn resultado;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        -192
+      ],
+      "id": "d7b21c12-b445-4349-9782-9347fe03c601",
+      "name": "Prep. IA"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=\nAtue como um assistente de relacionamento com clientes de uma consultoria de investimentos.\n\nSua tarefa é escrever um e-mail curto, profissional, cordial e personalizado, utilizando exclusivamente os dados fornecidos abaixo.\n\nDADOS DO CLIENTE:\nNome: {{ $json.nome }}\nE-mail: {{ $json.email }}\nPerfil de investidor: {{ $json.perfil }}\nSaldo disponível: R$ {{ $json.saldo }}\n\nINFORMAÇÕES SOBRE OS INVESTIMENTOS:\n{{ $json.mensagem }}\n\nINSTRUÇÕES:\n\n1. Cumprimente o cliente pelo primeiro nome.\n2. Informe brevemente que foram identificadas opções de investimentos compatíveis com seu perfil e saldo disponível.\n3. Apresente até três investimentos disponíveis na mensagem original, informando o nome do produto e o valor mínimo de aplicação.\n4. Utilize uma linguagem simples, objetiva e acolhedora.\n5. Convide o cliente a conhecer melhor as alternativas apresentadas.\n6. Não invente produtos, valores ou rentabilidades.\n7. Não prometa ganhos nem apresente uma recomendação financeira individual.\n8. Informe brevemente que os dados são ilustrativos e não constituem recomendação de investimento.\n9. O corpo do e-mail deve ter no máximo 120 palavras.\n10. Não inclua informações que não estejam nos dados recebidos.\n\nFORMATO DE RESPOSTA:\n\nRetorne exclusivamente um JSON válido, sem blocos Markdown, com os campos:\n\n{\n  \"assunto\": \"Assunto curto e personalizado\",\n  \"corpo\": \"Texto completo do e-mail\"\n}\n"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        976,
+        -544
+      ],
+      "id": "0b0ecd40-6d87-4ffe-8e73-bc2cad1fc0a3",
+      "name": "Message a model"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * NORMALIZAÇÃO DE E-MAILS PARA GMAIL\n * Fluxo: Prep. IA -> Gemini -> Code\n */\n\nconst itens = $input.all();\n\n// 1. Localizar o texto da resposta do Gemini\nfunction localizarTexto(valor, nivel = 0) {\n  if (nivel > 6 || valor == null) return \"\";\n\n  if (typeof valor === \"string\") return valor;\n\n  if (Array.isArray(valor)) {\n    for (const parte of valor) {\n      const texto = localizarTexto(parte, nivel + 1);\n      if (texto) return texto;\n    }\n    return \"\";\n  }\n\n  if (typeof valor === \"object\") {\n    const campos = [\n      \"text\", \"parts\", \"content\", \"candidates\",\n      \"output\", \"response\", \"message\", \"data\"\n    ];\n\n    for (const campo of campos) {\n      if (valor[campo] != null) {\n        const texto = localizarTexto(valor[campo], nivel + 1);\n        if (texto) return texto;\n      }\n    }\n  }\n\n  return \"\";\n}\n\n// 2. Interpretar o conteúdo gerado pela IA\nfunction interpretarResposta(dados) {\n\n  if (dados.assunto || dados.corpo) {\n    return dados;\n  }\n\n  let texto = localizarTexto(dados).trim();\n\n  if (!texto) {\n    throw new Error(\"Resposta vazia do Gemini.\");\n  }\n\n  // Remover blocos Markdown\n  texto = texto\n    .replace(/^```(?:json)?\\s*/i, \"\")\n    .replace(/\\s*```$/, \"\")\n    .trim();\n\n  // Tentar converter a resposta em JSON\n  try {\n    return JSON.parse(texto);\n  } catch (erro) {\n\n    // Caso o Gemini retorne Assunto e Corpo em texto\n    const assunto = texto.match(/^Assunto:\\s*(.+)$/im);\n    const corpo = texto.match(/^Corpo:\\s*([\\s\\S]*)$/im);\n\n    if (assunto && corpo) {\n      return {\n        assunto: assunto[1].trim(),\n        corpo: corpo[1].trim()\n      };\n    }\n\n    // Caso retorne somente texto\n    return {\n      assunto: \"\",\n      corpo: texto\n    };\n  }\n}\n\n// 3. Preparar os e-mails individualmente\nconst emails = itens.map((item, indice) => {\n\n  // Nome real do nó anterior ao Gemini\n  const cliente = $('Prep. IA')\n    .itemMatching(indice).json;\n\n  const respostaIA = interpretarResposta(item.json);\n\n  const nome = String(cliente.nome || \"\").trim();\n\n  // Sempre recuperar o e-mail dos dados originais\n  const para = String(cliente.email || \"\")\n    .trim()\n    .toLowerCase();\n\n  // Assunto padronizado\n  const assunto = String(\n    respostaIA.assunto ||\n    respostaIA.subject ||\n    `Informações de investimentos para ${nome}`\n  )\n    .replace(/[\\r\\n]+/g, \" \")\n    .trim();\n\n  // Corpo do e-mail\n  const corpo = String(\n    respostaIA.corpo ||\n    respostaIA.body ||\n    \"\"\n  )\n    .replace(/\\r\\n/g, \"\\n\")\n    .trim();\n\n  // Validar o e-mail\n  const emailValido = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n\n  if (!emailValido.test(para)) {\n    throw new Error(\n      `E-mail inválido para ${nome}: ${para}`\n    );\n  }\n\n  if (!corpo) {\n    throw new Error(\n      `Corpo do e-mail vazio para ${nome}`\n    );\n  }\n\n  // 4. Retornar os dados padronizados para Gmail\n  return {\n    json: {\n      nome: nome,\n      para: para,\n      assunto: assunto,\n      corpo: corpo,\n      perfil: cliente.perfil,\n      saldo: cliente.saldo,\n      status: \"Aguardando revisão\"\n    },\n    pairedItem: {\n      item: indice\n    }\n  };\n\n});\n\nreturn emails;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        -208
+      ],
+      "id": "308d7c60-1b51-4985-a5ef-889d861356e4",
+      "name": "Normalizando IA"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.para }}",
+        "subject": "={{ $json.assunto }}",
+        "message": "={{ $json.corpo }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        -208
+      ],
+      "id": "3c229710-c02e-4bb3-af09-9a37f6cc0c8d",
+      "name": "Send a message",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e48835c9-7319-47c0-82d8-e40597ce75b1",
+              "leftValue": "={{ $json.para }}",
+              "rightValue": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1328,
+        -208
+      ],
+      "id": "15212908-b477-44e1-b0ba-0a6e9009e700",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Gera mensagens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cadastro Clientes": {
+      "main": [
+        [
+          {
+            "node": "Investimentos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Investimentos": {
+      "main": [
+        [
+          {
+            "node": "Normalizando",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizando": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Gera mensagens": {
+      "main": [
+        [
+          {
+            "node": "Prep. IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep. IA": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Normalizando IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizando IA": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "nodeGroups": [],
+  "tags": []
+}
